@@ -142,8 +142,8 @@ class Images:
         # Ќеобходимо запомнить координаты центра модели относительно левого верхнего угла оригинального фото дл€ нормализации
         self.center_dict[angle] = [round((minX + maxX) / 2), round((minY + maxY) / 2)]
 
-        # cv2.imshow("mask", contour)
-        # cv2.waitKey()
+        cv2.imshow("mask", contour)
+        cv2.waitKey()
 
         # ƒобавл€ем проекцию в словарь с углом в качестве ключа
         self.masks[angle] = np.array(contour)
@@ -158,8 +158,8 @@ class Images:
                                           self.center_dict[angle][1],
                                           self.center_dict[angle][1]]
 
-            self.left_right_masks[angle] -= [self.center_dict[angle][0] - 1,
-                                             self.center_dict[angle][0] + 1,
+            self.left_right_masks[angle] -= [self.center_dict[angle][0],
+                                             self.center_dict[angle][0],
                                              self.center_dict[angle][1]]
 
     def generate_masks(self):
