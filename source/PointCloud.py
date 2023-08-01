@@ -4,7 +4,7 @@ import cupy as cp
 import pyvista
 import time
 
-from numba import cuda
+from source.Exporter import Exporter
 
 
 class PointCloud:
@@ -45,25 +45,29 @@ class PointCloud:
 
         # Проход по каждому горизонтальному слайсу
         for sl in sliced_array:
-            sl = cp.array(sl)
-            try:
-                # Получим из словаря координаты граничных значений для горизонтального слайса
-                xl, xr = contour[round(sl[0][2])]
+            # Высота текущего слайса
+            z = round(sl[0][2])
 
-                # Выберем только подпадающие под граничные значения точки
-                sl = sl[
-                    np.where(
-                        np.sqrt(sl[:, 0] ** 2 + sl[:, 1] ** 2) * np.cos(alpha + np.arctan2(sl[:, 1], sl[:, 0])) > xl)]
-                sl = sl[
-                    np.where(
-                        np.sqrt(sl[:, 0] ** 2 + sl[:, 1] ** 2) * np.cos(alpha + np.arctan2(sl[:, 1], sl[:, 0])) < xr)]
+            # Получим по высоте горизонтальную маску
+            mask = (contour[np.where(contour[:, 2] == z)]).flatten()
 
-                # Добавим их к новому массиву
-                result.append(sl)
-
-            # На случай отсутствия в словаре значений для нужной высоты пропускаем шаг
-            except KeyError or IndexError:
+            # Если маска пустая, то мы пропускаем этот слой
+            if not np.any(mask):
                 continue
+
+            # Получим из маски координаты граничных значений для горизонтального слайса
+            xl, xr, _ = mask
+
+            # Выберем только подпадающие под граничные значения точки
+            sl = sl[
+                np.where(
+                    np.sqrt(sl[:, 0] ** 2 + sl[:, 1] ** 2) * np.cos(alpha + np.arctan2(sl[:, 1], sl[:, 0])) > xl)]
+            sl = sl[
+                np.where(
+                    np.sqrt(sl[:, 0] ** 2 + sl[:, 1] ** 2) * np.cos(alpha + np.arctan2(sl[:, 1], sl[:, 0])) < xr)]
+
+            # Добавим их к новому массиву
+            result.append(sl)
 
         # pc = pyvista.PolyData(np.concatenate(result))
         # pc.plot()
@@ -159,3 +163,18 @@ class PointCloud:
 
         # Возвращаем соединённые слайсы
         self.point_cloud = np.vstack(result)
+
+    def generate_point_cloud(self, images):
+
+        # Генерация куба облака точек на ЦПУ
+        self.make_point_cloud_cube(images.x1 - images.x0, images.y1 - images.y0)
+        # self.make_point_cloud_cube(round((images.x1 - images.x0) / 5), round((images.y1 - images.y0) / 5))
+
+        # Вырезание формы из облака точек с каждого изображения для получения модели на 20%
+        for angle in images.left_right_masks_20:
+            print("Вырезаем под углом " + str(angle))
+
+            self.cut_into_point_cloud(images.left_right_masks[angle], angle)
+
+        # Удаление внутренностей
+        self.viscera_disposal()
