@@ -23,7 +23,7 @@ class Projector:
         self.images_20.generate_masks()
 
         print("Генерация контуров в полном масштабе")
-        self.images.generate_masks()
+        # self.images.generate_masks()
 
         # TODO: можно попробовать сгенерировать облако точек на 20 на масках от 100%, разделённых на 5,
         #  таким образом они будут точно одинаково центрированы
@@ -33,8 +33,8 @@ class Projector:
         print("Сохранение облака точек на 20% масштабе")
         Exporter.save_xyz(self.point_cloud_20.point_cloud, self.path + '/point_cloud_20.xyz')
 
-        print("Генерация облака точек в полном масштабе")
-        self.point_cloud.apply_masks_to_point_cloud(self.images, self.point_cloud_20.point_cloud)
-
-        print("Сохранение облака точек")
-        Exporter.save_xyz(cp.asnumpy(self.point_cloud.point_cloud), self.path + '/point_cloud_100.xyz')
+        # print("Генерация облака точек в полном масштабе")
+        # self.point_cloud.apply_masks_to_point_cloud(self.images, self.point_cloud_20.point_cloud)
+        #
+        # print("Сохранение облака точек")
+        # Exporter.save_xyz(cp.asnumpy(self.point_cloud.point_cloud), self.path + '/point_cloud_100.xyz')

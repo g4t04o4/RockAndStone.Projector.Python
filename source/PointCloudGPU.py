@@ -30,16 +30,16 @@ class PointCloudGPU:
             x, y, z = point * 5
 
             # Создадим по координатам точки куб размером 5x5
-            for ix in range(-2, 3):
-                for iy in range(-2, 3):
-                    for iz in range(-2, 3):
+            for ix in range(-1, 2):
+                for iy in range(-1, 2):
+                    for iz in range(-1, 2):
                         cube.append([x + ix, y + iy, z + iz])
 
             chunk.append(cube)
 
             if i == 0:
                 i = 100
-                new_cloud = cp.append(new_cloud, chunk)
+                new_cloud = cp.append(new_cloud, chunk).reshape((-1, 3))
                 chunk = []
 
         if i != 0:
@@ -85,6 +85,8 @@ class PointCloudGPU:
     def cut_shape_trigonometry(self, contour, angle):
 
         contour = cp.asarray(contour)
+
+        print(cp.any(contour))
 
         result = []
 
