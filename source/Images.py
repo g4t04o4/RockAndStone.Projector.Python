@@ -1,13 +1,11 @@
 # -*- coding: cp1251 -*-
-import re
-import os
-import glob
+from glob import glob
 import numpy as np
 import cv2
 
 
 class Images:
-    def __init__(self, path, scale):
+    def __init__(self, path, scale, angle, angled_flag):
 
         # Путь к директории с изображениями
         self.path = path
@@ -15,28 +13,25 @@ class Images:
         # Масштаб изображения
         self.scale = scale
 
-        # Словарь для проекций
-        # self.masks = {}
+        # Угол поворота камеры на изображениях
+        self.angle = angle
 
-        # Пороговое значение
-        self.intensity = 30
+        # Пороговое значение яркости
+        self.intensity = 100
 
-        # Координаты центров модели на фотографиях
-        # self.center_dict = {}
+        # Набор обработанных изображений с контурами
+        self.contours = {}
 
         # Набор левых и правых граничных значений
         self.left_right_masks = {}
-
-        self.left_right_masks_20 = {}
-
-        # Набор верхних и нижних граничных значений
-        self.up_down_masks = {}
 
         # Максимальные размеры модели
         self.x1, self.y1 = 0, 0
 
         # Координаты левой верхней точки модели для нормализации
-        self.x0, self.y0 = 1000, 1000
+        self.x0, self.y0 = 2000, 2000
+
+        self.angled_flag = angled_flag
 
     def load_gray_image(self, image_path):
         # Читаем изображение из файла
@@ -50,36 +45,65 @@ class Images:
                                 int(image.shape[0] * self.scale / 100)))
         return image
 
-    # def get_contour(self, image):
-    #     # Создаём пустое чёрное изображение для вывода
-    #     output = np.zeros(image.shape)
-    #
-    #     # Получим маску по пороговому значению
-    #     ret, thresh = cv2.threshold(image, self.intensity, 255, 0)
-    #
-    #     # Найдём в маске контуры
-    #     cnt, hier = cv2.findContours(thresh.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-    #
-    #     # Выберем наибольший контур
-    #     c = max(cnt, key=cv2.contourArea)
-    #
-    #     # Нарисуем наибольший контур на пустом изображении
-    #     cv2.drawContours(output, c, -1, color=255, thickness=cv2.FILLED)
-    #
-    #     return output
-
-    def get_single_mask(self, file_path, angle):
-        # Загружаем изображение и переводим в чёрно-белый формат
+    def get_single_contour(self, file_path, angle):
+        # загрузка чёрно-белого изображения
         image = self.load_gray_image(file_path)
 
-        # Получим контур с изображения
-        # contour = self.get_contour(image)
+        # вырезание рабочего кадра
+        # if self.angled_flag == 1:
+        #     h, w = image.shape
+        #     h0, h1 = int(1 * h / 5), int(3 * h / 5)
+        #     w0, w1 = int(w / 4), int(3 * w / 4)
+        #     image = image[h0:h1, w0:w1]
+        # else:
+        #     h, w = image.shape
+        #     h0, h1 = int(3 * h / 5), int(h)
+        #
+        #     w0, w1 = int(w / 4), int(3 * w / 4)
+        #     image = image[h0:h1, w0:w1]
+
+        # cv2.imshow("image", image)
+        # cv2.waitKey()
+
+        ret, thresh = cv2.threshold(image, 15, 255, cv2.THRESH_BINARY)
+
+        # cv2.imshow("image", thresh)
+        # cv2.waitKey()
+
+        # коэффициент ядра для морфологических операций над фотографией, зависит от масштаба фото
+        k = 12 * self.scale // 100
+        # kernel = np.ones((k, k), np.uint8)
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))
+        thresh = cv2.dilate(thresh, kernel, iterations=1)
+        # thresh = cv2.erode(thresh, kernel, iterations=1)
+
+        contours, hier = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+        sorted_contours = sorted(contours, key=cv2.contourArea, reverse=True)
+        largest = sorted_contours[0]
+
+        black = np.zeros(image.shape)
+        cv2.drawContours(black, largest, -1, (255, 0, 0), thickness=1)
+        cv2.fillPoly(black, pts=[largest], color=255)
+
+        # cv2.imshow("image", black)
+        # cv2.waitKey()
+
+        black = cv2.erode(black, kernel, iterations=1)
+        black = cv2.erode(black, kernel, iterations=1)
+        black = cv2.dilate(black, kernel, iterations=1)
+
+        # cv2.imshow("image", black)
+        # cv2.waitKey()
+
+        self.contours[angle] = black
+
+    def get_single_mask(self, angle):
+        # Загружаем полученный контур
+        image = self.contours[angle]
 
         # Находим границы модели
         minY, minX = image.shape
         maxY, maxX = 0, 0
-
-        # TODO: Нужно получить ненормализованные горизонтальные слайсы с картинки
 
         # Создаём пустой массив для горизонтальных слайсов
         left_right = []
@@ -89,11 +113,14 @@ class Images:
 
         # Проходим по строкам изображения от 0 до высоты изображения
         for i in range(y):
+
+            row_data = image[i, :]
+
             # Берём из строки те пиксели, значение которых выше граничного
-            row = np.where(image[i, :] > self.intensity)
+            row = np.where(row_data > self.intensity)
 
             # Если в строке больше одного пикселя
-            if len(row[0]) >= 2:
+            if len(row[0]) > 1:
 
                 # Сохраняем границы по Y
                 # Если стартовое значение minY равно высоте y
@@ -113,84 +140,73 @@ class Images:
                 if row[0][-1] > maxX:
                     maxX = row[0][-1]
 
-                # Добавим к массиву линию как кортеж [xl, xr, y] в формате float
-                left_right.append([float(row[0][0]), float(row[0][-1]), float(i)])
+                # TODO: нужно пропускать полости меньше 10 пикселей
 
-            #  Вычисляем максимальные размеры всей модели
-            if maxX > self.x1:
-                self.x1 = maxX
-            if maxY > self.y1:
-                self.y1 = maxY
+                left_border = row[0][0]
+                right_border = row[0][-1]
 
-            # Вычисляем левую верхнюю точку для последующей нормализации
-            if minX < self.x0:
-                self.x0 = minX
-            if minY < self.y0:
-                self.y0 = minY
+                temp_row = row_data[row[0][0]:row[0][-1]]
 
-        # TODO: получим ненормализованные вертикальные слайсы
-        # Проходим по столбцам изображения
+                # Получим только те биты, которые попадают под граничные условия
+                if temp_row[temp_row == 0.0].size == 0:
+                    left_right.append([float(left_border), float(right_border), float(i)])
+                else:
 
-        up_down = []
+                    while True:
+                        try:
+                            # Заполним единицами все пиксели левее левой границы
+                            row_data[0:int(left_border)] = 255.0
+                            # Найдём координаты первого встречного нуля - координаты начала полости
+                            left_cavity_border = np.argwhere(row_data == 0.0)[0] - 1
+                            # Сохраним в массив масок первый кусок камня
+                            left_right.append([float(left_border), float(left_cavity_border), float(i)])
+                            # Заполним нулями сохранённый кусок
+                            row_data[0:int(left_cavity_border + 1)] = 0.0
 
-        x = image.shape[1]
-        for i in range(x):
-            # Берём из столбца те пиксели, значение которых выше граничного
-            col = np.squeeze(np.array(np.where(image[:, i] > self.intensity)))
+                            # Если в оставшейся строке ещё остался кусок камня
+                            if row_data[row_data == 255.0].size != 0:
+                                left_border = np.argwhere(row_data == 255.0)[0]
+                            else:
+                                break
+                        except IndexError:
+                            break
 
-            try:
-                if len(col) >= 2:
-                    # Добавим к массиву линию как кортеж [x, yu, yd]
-                    up_down.append([float(i), float(col[0]), float(col[-1])])
-            except TypeError:
-                continue
-        # Построчно находим крайние пиксели и записываем в проекцию
-        # Также вычисляем размеры модели на фото для нормализации
+        #  Вычисляем максимальные размеры всей модели
+        if maxX > self.x1:
+            self.x1 = maxX
+        if maxY > self.y1:
+            self.y1 = maxY
 
-        # Вырезаем маску под размеры модели
-        # contour = contour[minY - 1:maxY + 1, minX - 1:maxX + 1]
+        # Вычисляем левую верхнюю точку для последующей нормализации
+        if minX < self.x0:
+            self.x0 = minX
+        if minY < self.y0:
+            self.y0 = minY
 
         # Необходимо запомнить координаты центра модели относительно левого верхнего угла оригинального фото для нормализации
         centerX = round((self.x0 + self.x1) / 2)
         centerY = round((self.y0 + self.y1) / 2)
 
         # Нормализация
-        up_down = np.array(up_down) - [centerX, centerY, centerY]
         left_right = np.array(left_right) - [centerX, centerX, centerY]
 
-        # cv2.imshow("mask", contour)
-        # cv2.waitKey()
-
         # Добавляем проекцию в словарь с углом в качестве ключа
-        # self.masks[angle] = np.array(contour)
-        self.up_down_masks[angle] = np.array(up_down)
         self.left_right_masks[angle] = np.array(left_right)
-
-        # TODO: нужно создать маску на 20% на основе маски на 100%
-        for angle in self.left_right_masks:
-            lil_mask = self.left_right_masks[angle]
-
-            lil_mask = np.round(lil_mask / 5)[0::5]
-
-            self.left_right_masks_20[angle] = lil_mask
 
     def generate_masks(self):
         # Получить список всех изображений в директории
-        files = [f for f in glob.glob(self.path + "**/*.png", recursive=True)]
+        files = []
+        for ext in ("**/*.jpg", "**/*.png", "**/*.bmp"):
+            files.extend(glob(self.path + ext, recursive=True))
+
+        curr_angle = 0.0
 
         # Первым проходом создаём проекции и вычисляем максимально возможный размер модели
         for file_path in files:
-            # Получить серийный номер фотографии из названия
-            # Он же является углом поворота
-            angle = int(re.search(r"\d{3}", os.path.basename(file_path)).group())
+            # Получим контуры по изображениям и вычислим максимальные размеры кристалла
+            self.get_single_contour(file_path, curr_angle)
 
-            print("Обрабатываем изображение угла " + str(angle))
+            # Нормализуем все изображения под размер кристалла и снимем с них маски
+            self.get_single_mask(curr_angle)
 
-            # Получить проекцию по изображению в формате набора точек границ
-            # Также необходимо получить максимальные размеры формы на фотографии в пикселях
-            self.get_single_mask(file_path, angle)
-
-        # self.normalize()
-
-        # cv2.imshow("mask", mask)
-        # cv2.waitKey()
+            curr_angle += self.angle

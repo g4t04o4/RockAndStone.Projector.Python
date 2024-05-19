@@ -1,40 +1,44 @@
 # -*- coding: cp1251 -*-
 import time
-import numpy as np
-import cupy as cp
 
 from source.Images import Images
-from source.PointCloudGPU import PointCloudGPU
-from source.PointCloud import PointCloud
+# from source.PointCloud import PointCloud
+from source.PointCloudTurning import PointCloudTurning as PointCloud
 from source.Exporter import Exporter
 
 
 class Projector:
 
-    def __init__(self, path):
-        self.path = path
-        self.images_20 = Images(path, 20)
-        self.images = Images(path, 100)
-        self.point_cloud_20 = PointCloud()
-        self.point_cloud = PointCloudGPU()
+    def __init__(self, image_path, angled_path, damage_path, scale, angle):
+        self.path = image_path
+        self.angled_path = angled_path
+        self.damage_path = damage_path
+        self.scale = scale
+        self.angle = angle
+        self.images = Images(self.path, self.scale, self.angle, angled_flag=0)
+        self.images_angled = Images(self.angled_path, self.scale, self.angle, angled_flag=1)
+        self.damages = Images(self.path, self.scale, self.angle, angled_flag=0)
+        self.point_cloud = PointCloud(self.images, self.images_angled, self.damages, self.angle)
 
     def generate_model(self):
-        # print("Генерация контуров по изображениям 20% масштаба")
-        self.images_20.generate_masks()
+        print("Генерируем {}% маски...".format(self.scale))
+        tic = time.perf_counter()
 
-        print("Генерация контуров в полном масштабе")
-        # self.images.generate_masks()
+        self.images.generate_masks()
+        self.images_angled.generate_masks()
+        self.damages.generate_masks()
 
-        # TODO: можно попробовать сгенерировать облако точек на 20 на масках от 100%, разделённых на 5,
-        #  таким образом они будут точно одинаково центрированы
-        print("Генерация облака точек на 20% масштабе")
-        self.point_cloud_20.generate_point_cloud(self.images_20)
+        toc = time.perf_counter()
+        print("Маски на {}% сгенерировались за:\n {}s".format(self.scale, round(toc - tic, 3)))
 
-        print("Сохранение облака точек на 20% масштабе")
-        Exporter.save_xyz(self.point_cloud_20.point_cloud, self.path + '/point_cloud_20.xyz')
+        print("Генерируем облако точек...")
+        tic = time.perf_counter()
 
-        # print("Генерация облака точек в полном масштабе")
-        # self.point_cloud.apply_masks_to_point_cloud(self.images, self.point_cloud_20.point_cloud)
-        #
-        # print("Сохранение облака точек")
-        # Exporter.save_xyz(cp.asnumpy(self.point_cloud.point_cloud), self.path + '/point_cloud_100.xyz')
+        self.point_cloud.generate_point_cloud()
+
+        toc = time.perf_counter()
+        print("Облако точек сгенерировалось за:\n {}s".format(round(toc - tic, 3)))
+
+        # TODO: нужно загрузить маску и отрисовать её на камне
+
+        Exporter.save_xyz(self.point_cloud.point_cloud, self.path + "/point_cloud_{}.xyz".format(self.scale))

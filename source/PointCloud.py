@@ -1,30 +1,25 @@
 # -*- coding: cp1251 -*-
 import numpy as np
-import cupy as cp
-import pyvista
 import time
 
 from source.Exporter import Exporter
 
 
 class PointCloud:
-
-    def __init__(self):
+    def __init__(self, images, angle):
         self.point_cloud = None
+        self.images = images
+        self.angle = angle
+        self.vertical_angle = 45
 
     def make_point_cloud_cube(self, width, height):
-        tic = time.perf_counter()
 
         height_range = np.arange(round(-height / 2), round(height / 2))
         width_range = np.arange(round(-width / 2), round(width / 2))
 
         self.point_cloud = np.array(np.meshgrid(width_range, width_range, height_range)).T.reshape(-1, 3)
 
-        toc = time.perf_counter()
-        diff = round(toc - tic, 3)
-        print("PC gen:  " + str(diff))
-
-    def cut_into_point_cloud(self, contour, angle):
+    def cut_into_point_cloud(self, left_right_mask, angle):
         # Пустой массив для результата
         result = []
 
@@ -35,10 +30,6 @@ class PointCloud:
         # Возьмём индексы всех первых точек с уникальным значением высоты
         indices = np.unique(self.point_cloud[:, 2], return_index=True)[1][1:]
 
-        # indices_tuple = tuple(np.atleast_1d(indices))
-        # for e in indices_tuple:
-        #     e = int(e)
-
         # Разделим по этим индексам массив на подмассивы точек на одной высоте
         # (намного быстрее, чем каждый раз вынимать слайс из массива)
         sliced_array = np.split(self.point_cloud, indices)
@@ -46,34 +37,60 @@ class PointCloud:
         # Проход по каждому горизонтальному слайсу
         for sl in sliced_array:
             # Высота текущего слайса
-            z = round(sl[0][2])
+            try:
+                z = round(sl[0][2])
+            except IndexError:
+                break
 
             # Получим по высоте горизонтальную маску
-            mask = (contour[np.where(contour[:, 2] == z)]).flatten()
+            mask = (left_right_mask[np.where(left_right_mask[:, 2] == z)])
 
-            # Если маска пустая, то мы пропускаем этот слой
-            if not np.any(mask):
-                continue
+            # Если в маске больше трёх аргументов, то это значит, что в этом слайсе была полость и нужно поочерёдно применить все маски
+            if mask.size > 3:
 
-            # Получим из маски координаты граничных значений для горизонтального слайса
-            xl, xr, _ = mask
+                for m in mask:
+                    sl_copy = sl.copy()
 
-            # Выберем только подпадающие под граничные значения точки
-            sl = sl[
-                np.where(
-                    np.sqrt(sl[:, 0] ** 2 + sl[:, 1] ** 2) * np.cos(alpha + np.arctan2(sl[:, 1], sl[:, 0])) > xl)]
-            sl = sl[
-                np.where(
-                    np.sqrt(sl[:, 0] ** 2 + sl[:, 1] ** 2) * np.cos(alpha + np.arctan2(sl[:, 1], sl[:, 0])) < xr)]
+                    # Получим из маски координаты граничных значений для горизонтального слайса
+                    xl, xr, _ = m
 
-            # Добавим их к новому массиву
-            result.append(sl)
+                    # Выберем только подпадающие под граничные значения точки
+                    sl_copy = sl_copy[np.where(
+                        np.sqrt(sl_copy[:, 0] ** 2 + sl_copy[:, 1] ** 2) * np.cos(
+                            alpha + np.arctan2(sl_copy[:, 1], sl_copy[:, 0])) > xl)]
+                    sl_copy = sl_copy[np.where(
+                        np.sqrt(sl_copy[:, 0] ** 2 + sl_copy[:, 1] ** 2) * np.cos(
+                            alpha + np.arctan2(sl_copy[:, 1], sl_copy[:, 0])) < xr)]
 
-        # pc = pyvista.PolyData(np.concatenate(result))
-        # pc.plot()
+                    # Добавим их к новому массиву
+                    result.append(sl_copy)
 
-        # Возвращаем соединённые слайсы
-        self.point_cloud = np.concatenate(result)
+            # Иначе просто применяем маску как обычно
+            else:
+                mask = mask.flatten()
+
+                # Если маска пустая, то мы пропускаем этот слой
+                if not np.any(mask):
+                    continue
+
+                # Получим из маски координаты граничных значений для горизонтального слайса
+                xl, xr, _ = mask
+
+                # Выберем только подпадающие под граничные значения точки
+                sl = sl[
+                    np.where(
+                        np.sqrt(sl[:, 0] ** 2 + sl[:, 1] ** 2) * np.cos(alpha + np.arctan2(sl[:, 1], sl[:, 0])) > xl)]
+                sl = sl[
+                    np.where(
+                        np.sqrt(sl[:, 0] ** 2 + sl[:, 1] ** 2) * np.cos(alpha + np.arctan2(sl[:, 1], sl[:, 0])) < xr)]
+
+                # Добавим их к новому массиву
+                result.append(sl)
+
+            self.point_cloud = np.concatenate(result)
+
+        # Exporter.save_xyz(self.point_cloud, "C:/Images/rock 81 2,2222deg/h_cut.xyz")
+        # print("xyz")
 
     def viscera_disposal(self):
         # Массив облака точек изначально отсортирован по z, особенности генерации
@@ -164,17 +181,24 @@ class PointCloud:
         # Возвращаем соединённые слайсы
         self.point_cloud = np.vstack(result)
 
-    def generate_point_cloud(self, images):
+    def generate_point_cloud(self):
 
-        # Генерация куба облака точек на ЦПУ
-        self.make_point_cloud_cube(images.x1 - images.x0, images.y1 - images.y0)
-        # self.make_point_cloud_cube(round((images.x1 - images.x0) / 5), round((images.y1 - images.y0) / 5))
+        # Создаём облако точек в форме куба по максимальным размерам камня на фото
+        width = self.images.x1 - self.images.x0
+        height = self.images.y1 - self.images.y0
+        self.make_point_cloud_cube(width, height)
 
-        # Вырезание формы из облака точек с каждого изображения для получения модели на 20%
-        for angle in images.left_right_masks_20:
-            print("Вырезаем под углом " + str(angle))
+        # Exporter.save_xyz(self.point_cloud, "C:/Images/rock 81 2,2222deg/cube.xyz")
 
-            self.cut_into_point_cloud(images.left_right_masks[angle], angle)
+        index = 1
+        # Вырезаем из облака точек по маске формы камня
+        for angle in self.images.left_right_masks:
+            self.cut_into_point_cloud(self.images.left_right_masks[angle], angle)
 
-        # Удаление внутренностей
+            print("xyz")
+
+            # Exporter.save_xyz(self.point_cloud, "C:/Images/rock 81 2,2222deg/slice_{}.xyz".format(index))
+            # index = index + 1
+
+        # Удаляем внутренности модели
         self.viscera_disposal()
